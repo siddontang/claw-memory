@@ -1,0 +1,21 @@
+{
+  "name": "claw-memory",
+  "version": "1.0.0",
+  "description": "Claw Memory Sharing Service — Cloudflare Worker + TiDB backend for cross-instance memory sharing",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:init": "tsx scripts/init-db.ts"
+  },
+  "dependencies": {
+    "@tidbcloud/serverless": "^0.2.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240620.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^3.60.0",
+    "tsx": "^4.16.0"
+  }
+}

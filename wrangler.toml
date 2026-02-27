@@ -1,0 +1,13 @@
+name = "claw-memory"
+main = "src/index.ts"
+compatibility_date = "2024-06-20"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+
+# TiDB connection — set these as secrets via:
+#   wrangler secret put TIDB_HOST
+#   wrangler secret put TIDB_USER
+#   wrangler secret put TIDB_PASSWORD
+#   wrangler secret put TIDB_DATABASE
