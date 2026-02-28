@@ -1,16 +1,16 @@
 import type { Connection } from "@tidbcloud/serverless";
-import { query } from "./db";
+import { query, getTokenConnection } from "./db";
 import { errorResponse, isValidToken } from "./utils";
-import type { MemorySpace } from "./types";
+import type { TokenRegistry } from "./types";
 
 /**
  * Extract and validate the bearer token from the Authorization header.
- * Returns the token string or a Response (error).
+ * Looks up the token in the central registry and returns the per-token connection.
  */
 export async function authenticate(
   request: Request,
-  conn: Connection
-): Promise<{ token: string; space: MemorySpace } | Response> {
+  registryConn: Connection
+): Promise<{ token: string; tokenConn: Connection } | Response> {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader) {
     return errorResponse("Missing Authorization header", 401);
@@ -26,15 +26,10 @@ export async function authenticate(
     return errorResponse("Invalid token format", 401);
   }
 
-  const spaces = await query<MemorySpace>(
-    conn,
-    "SELECT id, token, created_at, member_count FROM memory_spaces WHERE token = ?",
-    [token]
-  );
-
-  if (spaces.length === 0) {
+  const tokenConn = await getTokenConnection(registryConn, token);
+  if (!tokenConn) {
     return errorResponse("Token not found", 401);
   }
 
-  return { token, space: spaces[0] };
+  return { token, tokenConn };
 }

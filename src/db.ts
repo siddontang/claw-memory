@@ -1,18 +1,58 @@
 import { connect, Connection } from "@tidbcloud/serverless";
-import type { Env } from "./types";
+import type { Env, TokenRegistry } from "./types";
 
-let _connection: Connection | null = null;
+let _registryConnection: Connection | null = null;
+const _tokenConnections = new Map<string, Connection>();
 
-export function getConnection(env: Env): Connection {
-  if (!_connection) {
-    _connection = connect({
-      host: env.TIDB_HOST,
-      username: env.TIDB_USER,
-      password: env.TIDB_PASSWORD,
-      database: env.TIDB_DATABASE,
+/** Get a connection to the central registry database */
+export function getRegistryConnection(env: Env): Connection {
+  if (!_registryConnection) {
+    _registryConnection = connect({
+      host: env.REGISTRY_HOST,
+      username: env.REGISTRY_USER,
+      password: env.REGISTRY_PASSWORD,
+      database: env.REGISTRY_DATABASE,
     });
   }
-  return _connection;
+  return _registryConnection;
+}
+
+/** Look up a token's connection info from the registry and return a cached connection */
+export async function getTokenConnection(
+  registryConn: Connection,
+  token: string
+): Promise<Connection | null> {
+  const cached = _tokenConnections.get(token);
+  if (cached) return cached;
+
+  const rows = await query<TokenRegistry>(
+    registryConn,
+    "SELECT token, tidb_host, tidb_port, tidb_user, tidb_password, tidb_database, expires_at, created_at FROM token_registry WHERE token = ?",
+    [token]
+  );
+
+  if (rows.length === 0) return null;
+
+  const reg = rows[0];
+  const conn = connect({
+    host: reg.tidb_host,
+    username: reg.tidb_user,
+    password: reg.tidb_password,
+    database: reg.tidb_database,
+  });
+
+  _tokenConnections.set(token, conn);
+  return conn;
+}
+
+/** Create a connection from raw connection details (used during provisioning before registry entry exists) */
+export function createConnection(opts: {
+  host: string;
+  username: string;
+  password: string;
+  database: string;
+}): Connection {
+  return connect(opts);
 }
 
 export async function query<T = Record<string, unknown>>(
@@ -32,18 +72,8 @@ export async function execute(
   await conn.execute(sql, params);
 }
 
-/** Initialize the database schema */
+/** Initialize the memories table on a per-token TiDB instance */
 export async function initSchema(conn: Connection): Promise<void> {
-  await conn.execute(`
-    CREATE TABLE IF NOT EXISTS memory_spaces (
-      id VARCHAR(36) PRIMARY KEY,
-      token VARCHAR(64) UNIQUE NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      member_count INT DEFAULT 1,
-      INDEX idx_token (token)
-    )
-  `);
-
   await conn.execute(`
     CREATE TABLE IF NOT EXISTS memories (
       id VARCHAR(36) PRIMARY KEY,
@@ -57,7 +87,7 @@ export async function initSchema(conn: Connection): Promise<void> {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_space_token (space_token),
       INDEX idx_source (space_token, source),
-      INDEX idx_key (space_token, key_name),
+      INDEX idx_key (space_token, key_name)
     )
   `);
 }

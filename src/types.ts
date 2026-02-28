@@ -1,16 +1,20 @@
 export interface Env {
-  TIDB_HOST: string;
-  TIDB_USER: string;
-  TIDB_PASSWORD: string;
-  TIDB_DATABASE: string;
+  REGISTRY_HOST: string;
+  REGISTRY_USER: string;
+  REGISTRY_PASSWORD: string;
+  REGISTRY_DATABASE: string;
   ENVIRONMENT: string;
 }
 
-export interface MemorySpace {
-  id: string;
+export interface TokenRegistry {
   token: string;
+  tidb_host: string;
+  tidb_port: number;
+  tidb_user: string;
+  tidb_password: string;
+  tidb_database: string;
+  expires_at: string | null;
   created_at: string;
-  member_count: number;
 }
 
 export interface Memory {

@@ -1,4 +1,4 @@
-import { getConnection } from "./db";
+import { getRegistryConnection } from "./db";
 import { authenticate } from "./auth";
 import { createToken, getTokenInfo } from "./routes/tokens";
 import {
@@ -77,16 +77,16 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // Health check
   if (path === "/" || path === "/health") {
-    return jsonResponse({ ok: true, service: "claw-memory", version: "1.0.0" });
+    return jsonResponse({ ok: true, service: "claw-memory", version: "2.0.0" });
   }
 
-  const conn = getConnection(env);
+  const registryConn = getRegistryConnection(env);
 
   // --- Token routes (no auth required) ---
 
   // POST /api/tokens
   if (path === "/api/tokens" && method === "POST") {
-    return createToken(conn);
+    return createToken(registryConn);
   }
 
   // GET /api/tokens/:token/info
@@ -96,16 +96,16 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     if (!isValidToken(token)) {
       return errorResponse("Invalid token format", 400);
     }
-    return getTokenInfo(conn, token);
+    return getTokenInfo(registryConn, token);
   }
 
   // --- Memory routes (auth required) ---
 
   if (path.startsWith("/api/memories")) {
-    // Authenticate
-    const authResult = await authenticate(request, conn);
+    // Authenticate — looks up token in registry, returns per-token connection
+    const authResult = await authenticate(request, registryConn);
     if (authResult instanceof Response) return authResult;
-    const { token } = authResult;
+    const { token, tokenConn } = authResult;
 
     // Rate limit per token
     if (!checkRateLimit(token)) {
@@ -114,17 +114,17 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
     // POST /api/memories/bulk
     if (path === "/api/memories/bulk" && method === "POST") {
-      return bulkImport(request, conn, token);
+      return bulkImport(request, tokenConn, token);
     }
 
     // POST /api/memories
     if (path === "/api/memories" && method === "POST") {
-      return createMemory(request, conn, token);
+      return createMemory(request, tokenConn, token);
     }
 
     // GET /api/memories
     if (path === "/api/memories" && method === "GET") {
-      return listMemories(request, conn, token);
+      return listMemories(request, tokenConn, token);
     }
 
     // Routes with :id
@@ -132,9 +132,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     if (idMatch) {
       const id = idMatch[1];
 
-      if (method === "GET") return getMemory(conn, token, id);
-      if (method === "PUT") return updateMemory(request, conn, token, id);
-      if (method === "DELETE") return deleteMemory(conn, token, id);
+      if (method === "GET") return getMemory(tokenConn, token, id);
+      if (method === "PUT") return updateMemory(request, tokenConn, token, id);
+      if (method === "DELETE") return deleteMemory(tokenConn, token, id);
 
       return errorResponse("Method not allowed", 405);
     }
