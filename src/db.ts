@@ -1,5 +1,6 @@
 import { connect, Connection } from "@tidbcloud/serverless";
-import type { Env, TokenRegistry } from "./types";
+import type { Env, TokenRegistry, ConnectionInfo } from "./types";
+import { decrypt } from "./crypto";
 
 let _registryConnection: Connection | null = null;
 const _tokenConnections = new Map<string, Connection>();
@@ -17,31 +18,57 @@ export function getRegistryConnection(env: Env): Connection {
   return _registryConnection;
 }
 
-/** Look up a token's connection info from the registry and return a cached connection */
+type TokenConnectionError = "not_found" | "client_key_required" | "decrypt_failed";
+
+/** Look up a token's connection info from the registry, decrypt, and return a cached connection */
 export async function getTokenConnection(
   registryConn: Connection,
-  token: string
-): Promise<Connection | null> {
-  const cached = _tokenConnections.get(token);
+  token: string,
+  serverKey: string,
+  clientKey?: string
+): Promise<Connection | TokenConnectionError> {
+  // Cache key includes client key presence so different keys don't collide
+  const cacheKey = clientKey ? `${token}:${clientKey}` : token;
+  const cached = _tokenConnections.get(cacheKey);
   if (cached) return cached;
 
   const rows = await query<TokenRegistry>(
     registryConn,
-    "SELECT token, tidb_host, tidb_port, tidb_user, tidb_password, tidb_database, expires_at, created_at FROM token_registry WHERE token = ?",
+    "SELECT token, connection_encrypted, iv, has_client_key, expires_at, created_at FROM token_registry WHERE token = ?",
     [token]
   );
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0) return "not_found";
 
   const reg = rows[0];
+
+  // If token was created with a client key, caller must provide one
+  if (reg.has_client_key && !clientKey) {
+    return "client_key_required";
+  }
+
+  // Decrypt the connection info
+  let connInfo: ConnectionInfo;
+  try {
+    const plaintext = await decrypt(
+      reg.connection_encrypted,
+      reg.iv,
+      serverKey,
+      reg.has_client_key ? clientKey : undefined
+    );
+    connInfo = JSON.parse(plaintext);
+  } catch {
+    return "decrypt_failed";
+  }
+
   const conn = connect({
-    host: reg.tidb_host,
-    username: reg.tidb_user,
-    password: reg.tidb_password,
-    database: reg.tidb_database,
+    host: connInfo.host,
+    username: connInfo.user,
+    password: connInfo.password,
+    database: connInfo.database,
   });
 
-  _tokenConnections.set(token, conn);
+  _tokenConnections.set(cacheKey, conn);
   return conn;
 }
 

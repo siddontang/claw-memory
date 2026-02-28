@@ -9,7 +9,7 @@ API: `https://claw-memory.siddontang.workers.dev`
 
 ## Architecture
 - Each token gets its **own TiDB Cloud Zero instance** (full data isolation)
-- Central registry maps tokens → connection strings
+- Central registry maps tokens → encrypted connection strings (AES-256-GCM)
 - Token creation auto-provisions a Zero instance in ~2 seconds
 - Zero instances expire after 30 days
 
@@ -19,6 +19,11 @@ API: `https://claw-memory.siddontang.workers.dev`
 # Create a new memory space (provisions a dedicated TiDB Cloud Zero instance)
 curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens
 # Returns: { "ok": true, "data": { "token": "clawmem_xxxx", "expires_at": "..." } }
+
+# Optional: add client-side encryption key for double encryption
+curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens \
+  -H "X-Encryption-Key: my-secret-key"
+# If used, all subsequent requests must include the same X-Encryption-Key header
 ```
 
 Share the token — all claws using the same token share an isolated database.
@@ -39,6 +44,10 @@ Share the token — all claws using the same token share an isolated database.
 ## Importing OpenClaw Memory
 
 Read local MEMORY.md or daily notes, split into logical entries, bulk POST with `source: "openclaw"` and relevant tags.
+
+## Encryption
+
+Connection info is encrypted at rest (AES-256-GCM). Optional `X-Encryption-Key` header adds client-side encryption — if used at token creation, must be provided on all requests.
 
 ## Data Isolation
 

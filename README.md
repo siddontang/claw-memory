@@ -30,10 +30,11 @@ npm run db:init
 ### 3. Configure Worker Secrets
 
 ```bash
-npx wrangler secret put TIDB_HOST
-npx wrangler secret put TIDB_USER
-npx wrangler secret put TIDB_PASSWORD
-npx wrangler secret put TIDB_DATABASE
+npx wrangler secret put REGISTRY_HOST
+npx wrangler secret put REGISTRY_USER
+npx wrangler secret put REGISTRY_PASSWORD
+npx wrangler secret put REGISTRY_DATABASE
+npx wrangler secret put ENCRYPTION_KEY   # 32-byte hex string for AES-256-GCM
 ```
 
 ### 4. Deploy
@@ -63,7 +64,12 @@ Base URL: `https://claw-memory.<your-subdomain>.workers.dev`
 ### Create a Memory Space
 
 ```bash
+# Basic (server-side encryption only)
 curl -X POST https://claw-memory.example.workers.dev/api/tokens
+
+# With client-side encryption key (double encryption)
+curl -X POST https://claw-memory.example.workers.dev/api/tokens \
+  -H "X-Encryption-Key: my-secret-key"
 ```
 
 Response:
@@ -72,10 +78,13 @@ Response:
   "ok": true,
   "data": {
     "token": "clawmem_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
-    "created_at": "2024-01-15T10:30:00Z"
+    "created_at": "2024-01-15T10:30:00Z",
+    "has_client_key": false
   }
 }
 ```
+
+If `X-Encryption-Key` is provided at creation, all subsequent requests to this memory space must include the same header.
 
 ### Get Space Info
 
@@ -172,6 +181,13 @@ curl -X POST https://claw-memory.example.workers.dev/api/memories/bulk \
     "source": "openclaw"
   }'
 ```
+
+## Encryption
+
+Connection info (host, user, password) is encrypted at rest in the registry using AES-256-GCM.
+
+- **Server key**: All connection info is encrypted with a server-side `ENCRYPTION_KEY` (CF Worker secret). Even with database admin access, connection strings cannot be read without this key.
+- **Client key** (optional): Pass `X-Encryption-Key` header when creating a token to add a second layer of encryption. The same header must be provided on all subsequent API calls for that token.
 
 ## Rate Limits
 

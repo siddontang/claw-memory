@@ -6,8 +6,9 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ENVIRONMENT = "production"
 
-# Registry TiDB connection — set these as secrets via:
+# Registry TiDB connection + encryption — set these as secrets via:
 #   wrangler secret put REGISTRY_HOST
 #   wrangler secret put REGISTRY_USER
 #   wrangler secret put REGISTRY_PASSWORD
 #   wrangler secret put REGISTRY_DATABASE
+#   wrangler secret put ENCRYPTION_KEY

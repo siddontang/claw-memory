@@ -1,11 +1,17 @@
 import type { Connection } from "@tidbcloud/serverless";
 import { query, execute, createConnection, initSchema, getTokenConnection } from "../db";
 import { generateToken, jsonResponse, errorResponse, isValidToken } from "../utils";
-import type { TokenRegistry } from "../types";
+import { encrypt } from "../crypto";
+import type { TokenRegistry, ConnectionInfo } from "../types";
 
 /** POST /api/tokens — Provision a new TiDB Cloud Zero instance and create a token */
-export async function createToken(registryConn: Connection): Promise<Response> {
+export async function createToken(
+  registryConn: Connection,
+  serverEncryptionKey: string,
+  request: Request
+): Promise<Response> {
   const token = generateToken();
+  const clientKey = request.headers.get("X-Encryption-Key") || undefined;
 
   // Provision a new TiDB Cloud Zero instance
   const provisionRes = await fetch("https://zero.tidbapi.com/v1alpha1/instances", {
@@ -41,12 +47,20 @@ export async function createToken(registryConn: Connection): Promise<Response> {
   const tokenConn = createConnection({ host, username, password, database });
   await initSchema(tokenConn);
 
+  // Encrypt the connection info
+  const connInfo: ConnectionInfo = { host, port, user: username, password, database };
+  const { ciphertext, iv } = await encrypt(
+    JSON.stringify(connInfo),
+    serverEncryptionKey,
+    clientKey
+  );
+
   // Store the mapping in the registry
   await execute(
     registryConn,
-    `INSERT INTO token_registry (token, tidb_host, tidb_port, tidb_user, tidb_password, tidb_database, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [token, host, port, username, password, database, expiresAt]
+    `INSERT INTO token_registry (token, connection_encrypted, iv, has_client_key, expires_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [token, ciphertext, iv, clientKey ? 1 : 0, expiresAt]
   );
 
   // Read back to get created_at
@@ -63,6 +77,7 @@ export async function createToken(registryConn: Connection): Promise<Response> {
         token: rows[0].token,
         created_at: rows[0].created_at,
         expires_at: rows[0].expires_at,
+        has_client_key: !!clientKey,
       },
     },
     201
@@ -72,11 +87,13 @@ export async function createToken(registryConn: Connection): Promise<Response> {
 /** GET /api/tokens/:token/info — Get token info and memory stats */
 export async function getTokenInfo(
   registryConn: Connection,
-  token: string
+  token: string,
+  serverEncryptionKey: string,
+  request: Request
 ): Promise<Response> {
   const rows = await query<TokenRegistry>(
     registryConn,
-    "SELECT token, expires_at, created_at FROM token_registry WHERE token = ?",
+    "SELECT token, has_client_key, expires_at, created_at FROM token_registry WHERE token = ?",
     [token]
   );
 
@@ -85,12 +102,22 @@ export async function getTokenInfo(
   }
 
   const reg = rows[0];
+  const clientKey = request.headers.get("X-Encryption-Key") || undefined;
 
   // Connect to the token's dedicated instance to get stats
-  const tokenConn = await getTokenConnection(registryConn, token);
-  if (!tokenConn) {
-    return errorResponse("Token database unavailable", 500);
+  const result = await getTokenConnection(registryConn, token, serverEncryptionKey, clientKey);
+
+  if (result === "not_found") {
+    return errorResponse("Token not found", 404);
   }
+  if (result === "client_key_required") {
+    return errorResponse("This memory space requires an encryption key", 401);
+  }
+  if (result === "decrypt_failed") {
+    return errorResponse("Invalid encryption key", 401);
+  }
+
+  const tokenConn = result;
 
   const countResult = await query<{ cnt: number }>(
     tokenConn,
@@ -110,6 +137,7 @@ export async function getTokenInfo(
       token: reg.token,
       created_at: reg.created_at,
       expires_at: reg.expires_at,
+      has_client_key: !!reg.has_client_key,
       memory_count: countResult[0]?.cnt ?? 0,
       sources: sourceResult.map((r) => ({
         source: r.source,

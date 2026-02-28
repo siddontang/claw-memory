@@ -23,11 +23,9 @@ async function main() {
   await conn.execute(`
     CREATE TABLE IF NOT EXISTS token_registry (
       token VARCHAR(64) PRIMARY KEY,
-      tidb_host VARCHAR(255) NOT NULL,
-      tidb_port INT DEFAULT 4000,
-      tidb_user VARCHAR(255) NOT NULL,
-      tidb_password VARCHAR(255) NOT NULL,
-      tidb_database VARCHAR(255) DEFAULT 'claw_memory',
+      connection_encrypted TEXT NOT NULL,
+      iv VARCHAR(32) NOT NULL,
+      has_client_key BOOLEAN DEFAULT FALSE,
       expires_at DATETIME,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )

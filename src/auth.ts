@@ -1,16 +1,22 @@
 import type { Connection } from "@tidbcloud/serverless";
-import { query, getTokenConnection } from "./db";
+import { getTokenConnection } from "./db";
 import { errorResponse, isValidToken } from "./utils";
-import type { TokenRegistry } from "./types";
+
+export interface AuthResult {
+  token: string;
+  tokenConn: Connection;
+}
 
 /**
  * Extract and validate the bearer token from the Authorization header.
  * Looks up the token in the central registry and returns the per-token connection.
+ * Passes the encryption key (server + optional client) through for decryption.
  */
 export async function authenticate(
   request: Request,
-  registryConn: Connection
-): Promise<{ token: string; tokenConn: Connection } | Response> {
+  registryConn: Connection,
+  serverEncryptionKey: string
+): Promise<AuthResult | Response> {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader) {
     return errorResponse("Missing Authorization header", 401);
@@ -26,10 +32,19 @@ export async function authenticate(
     return errorResponse("Invalid token format", 401);
   }
 
-  const tokenConn = await getTokenConnection(registryConn, token);
-  if (!tokenConn) {
+  const clientKey = request.headers.get("X-Encryption-Key") || undefined;
+
+  const result = await getTokenConnection(registryConn, token, serverEncryptionKey, clientKey);
+
+  if (result === "not_found") {
     return errorResponse("Token not found", 401);
   }
+  if (result === "client_key_required") {
+    return errorResponse("This memory space requires an encryption key", 401);
+  }
+  if (result === "decrypt_failed") {
+    return errorResponse("Invalid encryption key", 401);
+  }
 
-  return { token, tokenConn };
+  return { token, tokenConn: result };
 }

@@ -34,7 +34,7 @@ function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Encryption-Key",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -77,7 +77,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // Health check
   if (path === "/" || path === "/health") {
-    return jsonResponse({ ok: true, service: "claw-memory", version: "2.0.0" });
+    return jsonResponse({ ok: true, service: "claw-memory", version: "2.1.0" });
   }
 
   const registryConn = getRegistryConnection(env);
@@ -86,7 +86,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // POST /api/tokens
   if (path === "/api/tokens" && method === "POST") {
-    return createToken(registryConn);
+    return createToken(registryConn, env.ENCRYPTION_KEY, request);
   }
 
   // GET /api/tokens/:token/info
@@ -96,14 +96,14 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     if (!isValidToken(token)) {
       return errorResponse("Invalid token format", 400);
     }
-    return getTokenInfo(registryConn, token);
+    return getTokenInfo(registryConn, token, env.ENCRYPTION_KEY, request);
   }
 
   // --- Memory routes (auth required) ---
 
   if (path.startsWith("/api/memories")) {
     // Authenticate — looks up token in registry, returns per-token connection
-    const authResult = await authenticate(request, registryConn);
+    const authResult = await authenticate(request, registryConn, env.ENCRYPTION_KEY);
     if (authResult instanceof Response) return authResult;
     const { token, tokenConn } = authResult;
 

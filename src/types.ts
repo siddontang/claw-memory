@@ -3,18 +3,26 @@ export interface Env {
   REGISTRY_USER: string;
   REGISTRY_PASSWORD: string;
   REGISTRY_DATABASE: string;
+  ENCRYPTION_KEY: string;
   ENVIRONMENT: string;
 }
 
 export interface TokenRegistry {
   token: string;
-  tidb_host: string;
-  tidb_port: number;
-  tidb_user: string;
-  tidb_password: string;
-  tidb_database: string;
+  connection_encrypted: string;
+  iv: string;
+  has_client_key: boolean;
   expires_at: string | null;
   created_at: string;
+}
+
+/** Decrypted connection info stored inside connection_encrypted */
+export interface ConnectionInfo {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
 }
 
 export interface Memory {
