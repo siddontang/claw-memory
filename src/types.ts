@@ -39,6 +39,8 @@ export interface Memory {
 
 export interface CreateMemoryBody {
   key?: string;
+  from?: string;
+  to?: string;
   content: string;
   source?: string;
   tags?: string[];
@@ -47,6 +49,8 @@ export interface CreateMemoryBody {
 
 export interface UpdateMemoryBody {
   key?: string;
+  from?: string;
+  to?: string;
   content?: string;
   source?: string;
   tags?: string[];
@@ -64,6 +68,8 @@ export interface SearchParams {
   limit?: string;
   offset?: string;
   key?: string;
+  from?: string;
+  to?: string;
 }
 
 export interface ApiResponse<T = unknown> {

@@ -143,6 +143,16 @@ export async function listMemories(
     values.push(params.q);
   }
 
+  if (params.from) {
+    conditions.push("created_at >= ?");
+    values.push(params.from);
+  }
+
+  if (params.to) {
+    conditions.push("created_at <= ?");
+    values.push(params.to);
+  }
+
   const where = conditions.join(" AND ");
 
   const countRows = await query<{ cnt: number }>(
