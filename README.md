@@ -2,74 +2,96 @@
 
 A Cloudflare Worker + TiDB Cloud backend that lets any Claw agent (OpenClaw, KimiClaw, NanoClaw, etc.) share memory across instances.
 
+## Architecture
+
+```
+                         ┌─────────────────────────────────────┐
+                         │        Cloudflare Worker            │
+                         │        (claw-memory)                │
+                         │                                     │
+  ┌──────────┐           │  ┌───────────┐   ┌──────────────┐  │
+  │ OpenClaw │──token A──▶  │           │   │  AES-256-GCM │  │
+  ├──────────┤           │  │  Router   │──▶│  Encrypt /   │  │
+  │ KimiClaw │──token A──▶  │  + Auth   │   │  Decrypt     │  │
+  ├──────────┤           │  │           │   └──────┬───────┘  │
+  │ NanoClaw │──token B──▶  └─────┬─────┘          │          │
+  └──────────┘           │        │                │          │
+                         └────────┼────────────────┼──────────┘
+                                  │                │
+                    ┌─────────────▼──┐    ┌────────▼─────────┐
+                    │   Registry DB  │    │  TiDB Cloud Zero │
+                    │  (TiDB Cloud)  │    │  (per token)     │
+                    │                │    │                   │
+                    │  token_registry│    │  Token A ──▶ DB A │
+                    │  ┌───────────┐ │    │  Token B ──▶ DB B │
+                    │  │ token     │ │    │  Token C ──▶ DB C │
+                    │  │ encrypted │ │    │                   │
+                    │  │ iv        │ │    │  Each token gets  │
+                    │  │ has_key   │ │    │  its OWN isolated │
+                    │  │ expires   │ │    │  Zero instance    │
+                    │  └───────────┘ │    └───────────────────┘
+                    └────────────────┘
+```
+
+**Key design decisions:**
+
+- **Full data isolation** — Each token provisions its own [TiDB Cloud Zero](https://zero.tidbcloud.com) instance. No shared tables, no cross-token access.
+- **Encrypted registry** — Connection strings (host, user, password) are AES-256-GCM encrypted at rest. Even database admins cannot read them.
+- **Optional client-side encryption** — Claws can provide their own encryption key (`X-Encryption-Key` header) for double encryption. The server cannot decrypt without the client's key.
+- **Zero-friction provisioning** — Token creation auto-provisions a TiDB Cloud Zero instance in ~2 seconds. No signup, no config.
+- **30-day lifecycle** — Zero instances expire after 30 days (disposable by design).
+
 ## How It Works
 
-1. One claw creates a **memory space** and gets a token
+1. A claw calls `POST /api/tokens` → provisions a dedicated TiDB Cloud Zero instance, encrypts the connection string, stores the mapping in the registry, returns a token
 2. Other claws join by using the same token
-3. All claws read/write to shared memory via REST API
-4. Memories are searchable by full-text, tags, source, and key
+3. All memory operations go through the token's isolated database
+4. Memories are searchable by content, tags, source, and key
 
 ## Setup
 
-### 1. Provision TiDB Cloud
+### 1. Set up the Registry Database
 
-Create a TiDB Cloud Serverless cluster at [tidbcloud.com](https://tidbcloud.com). Note the host, user, password, and database name.
-
-### 2. Initialize Database
+Create a TiDB Cloud Serverless cluster for the central registry. Initialize the schema:
 
 ```bash
 npm install
 
-TIDB_HOST=gateway01.us-east-1.prod.aws.tidbcloud.com \
-TIDB_USER=your_user \
-TIDB_PASSWORD=your_password \
-TIDB_DATABASE=claw_memory \
+REGISTRY_HOST=gateway01.ap-northeast-1.prod.aws.tidbcloud.com \
+REGISTRY_USER=your_user \
+REGISTRY_PASSWORD=your_password \
+REGISTRY_DATABASE=claw_memory \
 npm run db:init
 ```
 
-### 3. Configure Worker Secrets
+### 2. Configure Worker Secrets
 
 ```bash
-npx wrangler secret put REGISTRY_HOST
-npx wrangler secret put REGISTRY_USER
-npx wrangler secret put REGISTRY_PASSWORD
-npx wrangler secret put REGISTRY_DATABASE
-npx wrangler secret put ENCRYPTION_KEY   # 32-byte hex string for AES-256-GCM
+npx wrangler secret put REGISTRY_HOST      # Registry TiDB host
+npx wrangler secret put REGISTRY_USER      # Registry TiDB user
+npx wrangler secret put REGISTRY_PASSWORD  # Registry TiDB password
+npx wrangler secret put REGISTRY_DATABASE  # Registry database name
+npx wrangler secret put ENCRYPTION_KEY     # openssl rand -hex 32
 ```
 
-### 4. Deploy
+### 3. Deploy
 
 ```bash
 npm run deploy
 ```
 
-### 5. Local Dev
-
-```bash
-# Create .dev.vars with your TiDB credentials
-cat > .dev.vars << 'EOF'
-TIDB_HOST=gateway01.us-east-1.prod.aws.tidbcloud.com
-TIDB_USER=your_user
-TIDB_PASSWORD=your_password
-TIDB_DATABASE=claw_memory
-EOF
-
-npm run dev
-```
-
 ## API Reference
 
-Base URL: `https://claw-memory.<your-subdomain>.workers.dev`
+Base URL: `https://claw-memory.siddontang.workers.dev`
 
 ### Create a Memory Space
 
 ```bash
 # Basic (server-side encryption only)
-curl -X POST https://claw-memory.example.workers.dev/api/tokens
+curl -X POST /api/tokens
 
-# With client-side encryption key (double encryption)
-curl -X POST https://claw-memory.example.workers.dev/api/tokens \
-  -H "X-Encryption-Key: my-secret-key"
+# With client encryption key (double encryption — even server can't read it)
+curl -X POST /api/tokens -H "X-Encryption-Key: my-secret-key"
 ```
 
 Response:
@@ -77,89 +99,52 @@ Response:
 {
   "ok": true,
   "data": {
-    "token": "clawmem_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
-    "created_at": "2024-01-15T10:30:00Z",
+    "token": "clawmem_a1b2c3...",
+    "created_at": "2026-02-28T10:30:00Z",
+    "expires_at": "2026-03-30T10:30:00Z",
     "has_client_key": false
   }
 }
 ```
 
-If `X-Encryption-Key` is provided at creation, all subsequent requests to this memory space must include the same header.
-
-### Get Space Info
-
-```bash
-curl https://claw-memory.example.workers.dev/api/tokens/clawmem_xxx/info
-```
-
 ### Store a Memory
 
 ```bash
-curl -X POST https://claw-memory.example.workers.dev/api/memories \
+curl -X POST /api/memories \
   -H "Authorization: Bearer clawmem_xxx" \
   -H "Content-Type: application/json" \
   -d '{
-    "content": "The user prefers dark mode and vim keybindings",
+    "content": "User prefers dark mode and vim keybindings",
     "source": "openclaw",
     "tags": ["preferences", "ui"],
-    "key": "user-preferences",
-    "metadata": { "confidence": "high" }
+    "key": "user-preferences"
   }'
 ```
 
 ### Search Memories
 
 ```bash
-# Full-text search
-curl "https://claw-memory.example.workers.dev/api/memories?q=dark+mode" \
-  -H "Authorization: Bearer clawmem_xxx"
-
-# Filter by tags
-curl "https://claw-memory.example.workers.dev/api/memories?tags=preferences,ui" \
-  -H "Authorization: Bearer clawmem_xxx"
-
-# Filter by source
-curl "https://claw-memory.example.workers.dev/api/memories?source=openclaw" \
-  -H "Authorization: Bearer clawmem_xxx"
-
-# Filter by key
-curl "https://claw-memory.example.workers.dev/api/memories?key=user-preferences" \
-  -H "Authorization: Bearer clawmem_xxx"
-
-# Pagination
-curl "https://claw-memory.example.workers.dev/api/memories?limit=20&offset=40" \
+curl "/api/memories?q=dark+mode&tags=preferences&source=openclaw&limit=20" \
   -H "Authorization: Bearer clawmem_xxx"
 ```
 
-### Get a Single Memory
+### Other Endpoints
 
-```bash
-curl https://claw-memory.example.workers.dev/api/memories/<id> \
-  -H "Authorization: Bearer clawmem_xxx"
-```
-
-### Update a Memory
-
-```bash
-curl -X PUT https://claw-memory.example.workers.dev/api/memories/<id> \
-  -H "Authorization: Bearer clawmem_xxx" \
-  -H "Content-Type: application/json" \
-  -d '{ "content": "Updated content", "tags": ["updated"] }'
-```
-
-### Delete a Memory
-
-```bash
-curl -X DELETE https://claw-memory.example.workers.dev/api/memories/<id> \
-  -H "Authorization: Bearer clawmem_xxx"
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /api/tokens | Create memory space (provisions Zero instance) |
+| GET | /api/tokens/:token/info | Space info + stats |
+| POST | /api/memories | Store a memory |
+| GET | /api/memories | Search/list (query: `q`, `tags`, `source`, `key`, `limit`, `offset`) |
+| GET | /api/memories/:id | Get one |
+| PUT | /api/memories/:id | Update |
+| DELETE | /api/memories/:id | Delete |
+| POST | /api/memories/bulk | Bulk import (max 200) |
 
 ### Bulk Import
 
-Import an array of memories:
-
 ```bash
-curl -X POST https://claw-memory.example.workers.dev/api/memories/bulk \
+curl -X POST /api/memories/bulk \
   -H "Authorization: Bearer clawmem_xxx" \
   -H "Content-Type: application/json" \
   -d '{
@@ -170,52 +155,39 @@ curl -X POST https://claw-memory.example.workers.dev/api/memories/bulk \
   }'
 ```
 
-Import from markdown (MEMORY.md format):
-
-```bash
-curl -X POST https://claw-memory.example.workers.dev/api/memories/bulk \
-  -H "Authorization: Bearer clawmem_xxx" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "markdown": "## Preferences\n- Dark mode enabled\n- Vim keybindings\n\n## Project\n- Uses TypeScript\n- Deployed on Cloudflare",
-    "source": "openclaw"
-  }'
-```
-
 ## Encryption
 
-Connection info (host, user, password) is encrypted at rest in the registry using AES-256-GCM.
-
-- **Server key**: All connection info is encrypted with a server-side `ENCRYPTION_KEY` (CF Worker secret). Even with database admin access, connection strings cannot be read without this key.
-- **Client key** (optional): Pass `X-Encryption-Key` header when creating a token to add a second layer of encryption. The same header must be provided on all subsequent API calls for that token.
-
-## Rate Limits
-
-- 100 requests per minute per token
-
-## Architecture
-
 ```
-┌──────────┐     ┌──────────────────┐     ┌──────────────┐
-│ OpenClaw │────▶│                  │────▶│              │
-├──────────┤     │  CF Worker       │     │  TiDB Cloud  │
-│ KimiClaw │────▶│  (claw-memory)   │────▶│  Serverless  │
-├──────────┤     │                  │     │              │
-│ NanoClaw │────▶│  Token Auth      │     │  Full-text   │
-└──────────┘     │  Rate Limiting   │     │  search      │
-                 │  CORS            │     │  JSON tags   │
-                 └──────────────────┘     └──────────────┘
+Without client key:              With client key:
+
+  plaintext                        plaintext
+      │                                │
+  ┌───▼───┐                      ┌────▼────┐
+  │Server │                      │Server + │
+  │  Key  │                      │Client   │
+  │(AES)  │                      │Keys     │
+  └───┬───┘                      └────┬────┘
+      │                                │
+  ciphertext ──▶ registry DB      ciphertext ──▶ registry DB
+                                  (server alone can't decrypt)
 ```
+
+- **Server key** (`ENCRYPTION_KEY` secret): Encrypts all connection strings by default
+- **Client key** (`X-Encryption-Key` header): Optional second layer. If provided at token creation, must be provided on every subsequent request. Server cannot decrypt without it.
 
 ## Memory Schema
 
-| Field      | Type         | Description                          |
-|------------|--------------|--------------------------------------|
-| id         | UUID         | Auto-generated                       |
-| key        | string       | Optional named key for upsert-style  |
-| content    | text         | The memory content (up to 50KB)      |
-| source     | string       | Which claw wrote it                  |
-| tags       | string[]     | Filterable tags                      |
-| metadata   | object       | Arbitrary structured data            |
-| created_at | timestamp    | When created                         |
-| updated_at | timestamp    | Last modified                        |
+| Field | Type | Description |
+|-------|------|-------------|
+| id | UUID | Auto-generated |
+| key | string | Optional named key |
+| content | text | Memory content (up to 50KB) |
+| source | string | Which claw wrote it (openclaw, kimiclaw, etc.) |
+| tags | string[] | Filterable tags |
+| metadata | object | Arbitrary structured data |
+| created_at | timestamp | When created |
+| updated_at | timestamp | Last modified |
+
+## License
+
+MIT

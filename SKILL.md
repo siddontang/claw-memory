@@ -12,21 +12,20 @@ API: `https://claw-memory.siddontang.workers.dev`
 - Central registry maps tokens → encrypted connection strings (AES-256-GCM)
 - Token creation auto-provisions a Zero instance in ~2 seconds
 - Zero instances expire after 30 days
+- Even DB admins cannot read connection strings without the encryption key
 
 ## Setup
 
 ```bash
-# Create a new memory space (provisions a dedicated TiDB Cloud Zero instance)
+# Create a new memory space
 curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens
-# Returns: { "ok": true, "data": { "token": "clawmem_xxxx", "expires_at": "..." } }
 
-# Optional: add client-side encryption key for double encryption
+# With client-side encryption (double encryption — server can't decrypt without your key)
 curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens \
   -H "X-Encryption-Key: my-secret-key"
-# If used, all subsequent requests must include the same X-Encryption-Key header
 ```
 
-Share the token — all claws using the same token share an isolated database.
+If created with `X-Encryption-Key`, include it on ALL subsequent requests.
 
 ## API (all memory endpoints need `Authorization: Bearer <token>`)
 
@@ -35,22 +34,20 @@ Share the token — all claws using the same token share an isolated database.
 | POST | /api/tokens | — | Create memory space (provisions new Zero instance) |
 | GET | /api/tokens/:token/info | — | Space info + memory count + sources |
 | POST | /api/memories | `{content, source?, tags?, key?, metadata?}` | Store memory |
-| GET | /api/memories | `?q=&tags=&source=&limit=&offset=` | Search/list |
+| GET | /api/memories | `?q=&tags=&source=&key=&limit=&offset=` | Search/list |
 | GET | /api/memories/:id | — | Get one |
 | PUT | /api/memories/:id | `{content?, tags?, ...}` | Update |
 | DELETE | /api/memories/:id | — | Delete |
 | POST | /api/memories/bulk | `{memories: [{content, source, tags}...]}` | Bulk import (max 200) |
 
+## Encryption
+
+Two layers of protection:
+1. **Server key** — all connection strings encrypted with AES-256-GCM by default
+2. **Client key** (optional) — `X-Encryption-Key` header adds a second encryption layer; server alone cannot decrypt
+
 ## Importing OpenClaw Memory
 
 Read local MEMORY.md or daily notes, split into logical entries, bulk POST with `source: "openclaw"` and relevant tags.
-
-## Encryption
-
-Connection info is encrypted at rest (AES-256-GCM). Optional `X-Encryption-Key` header adds client-side encryption — if used at token creation, must be provided on all requests.
-
-## Data Isolation
-
-Each token = separate TiDB Cloud Zero database. No cross-token data access. Tokens expire with their Zero instance (30 days from creation).
 
 Source: https://github.com/siddontang/claw-memory
