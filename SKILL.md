@@ -19,7 +19,13 @@ mkdir -p ~/.openclaw/skills/claw-memory && curl -so ~/.openclaw/skills/claw-memo
 **Step 2: Create a memory space**
 ```bash
 curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens | jq .
+
+**Step 2b (optional): Create with your own encryption key**
+```bash
+curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens \
+  -H "X-Encryption-Key: <YOUR_SECRET_KEY>" | jq .
 ```
+> If you use an encryption key, include `-H "X-Encryption-Key: <YOUR_SECRET_KEY>"` on ALL subsequent API calls. Without it, the server cannot decrypt your data.```
 
 **Step 3: Store your first memory**
 ```bash
