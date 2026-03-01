@@ -7,47 +7,75 @@ description: Shared memory service for AI agents (OpenClaw, KimiClaw, NanoClaw, 
 
 API: `https://claw-memory.siddontang.workers.dev`
 
-## Architecture
-- Each token gets its **own TiDB Cloud Zero instance** (full data isolation)
-- Central registry maps tokens → encrypted connection strings (AES-256-GCM)
-- Token creation auto-provisions a Zero instance in ~2 seconds
-- Zero instances expire after 30 days
-- Even DB admins cannot read connection strings without the encryption key
+## Quick Start
 
-## Setup
+When the user wants to set up Claw Memory, output these commands for them to copy-paste:
 
+**Step 1: Install the skill**
 ```bash
-# Create a new memory space
-curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens
-
-# With client-side encryption (double encryption — server can't decrypt without your key)
-curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens \
-  -H "X-Encryption-Key: my-secret-key"
+mkdir -p ~/.openclaw/skills/claw-memory && curl -so ~/.openclaw/skills/claw-memory/SKILL.md https://raw.githubusercontent.com/siddontang/claw-memory/main/SKILL.md
 ```
 
-If created with `X-Encryption-Key`, include it on ALL subsequent requests.
+**Step 2: Create a memory space**
+```bash
+curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens | jq .
+```
+
+**Step 3: Store your first memory**
+```bash
+curl -s -X POST https://claw-memory.siddontang.workers.dev/api/memories \
+  -H "Authorization: Bearer <TOKEN_FROM_STEP_2>" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Hello from my claw!", "source": "openclaw"}'
+```
+
+When the user says "yes" or confirms, run these commands directly.
+
+## Architecture
+- Each token gets its **own TiDB Cloud Zero instance** (full data isolation)
+- Connection strings are AES-256-GCM encrypted at rest
+- Optional client-side encryption via `X-Encryption-Key` header
+- Zero instances expire after 30 days
 
 ## API (all memory endpoints need `Authorization: Bearer <token>`)
 
 | Method | Endpoint | Body | Description |
 |--------|----------|------|-------------|
-| POST | /api/tokens | — | Create memory space (provisions new Zero instance) |
-| GET | /api/tokens/:token/info | — | Space info + memory count + sources |
+| POST | /api/tokens | — | Create memory space |
+| GET | /api/tokens/:token/info | — | Space info + stats |
 | POST | /api/memories | `{content, source?, tags?, key?, metadata?}` | Store memory |
-| GET | /api/memories | `?q=&tags=&source=&key=&limit=&offset=` | Search/list |
+| GET | /api/memories | `?q=&tags=&source=&key=&from=&to=&limit=&offset=` | Search/list |
 | GET | /api/memories/:id | — | Get one |
 | PUT | /api/memories/:id | `{content?, tags?, ...}` | Update |
 | DELETE | /api/memories/:id | — | Delete |
 | POST | /api/memories/bulk | `{memories: [{content, source, tags}...]}` | Bulk import (max 200) |
 
+## Common Tasks
+
+### Upload existing MEMORY.md
+```bash
+# Read the file, then bulk upload
+cat ~/.openclaw/workspace/MEMORY.md | jq -Rs '{memories: [{content: ., source: "openclaw", tags: ["memory"], key: "MEMORY.md"}]}' | \
+  curl -s -X POST https://claw-memory.siddontang.workers.dev/api/memories/bulk \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" -d @-
+```
+
+### Search memories
+```bash
+curl -s "https://claw-memory.siddontang.workers.dev/api/memories?q=<SEARCH>&limit=10" \
+  -H "Authorization: Bearer <TOKEN>" | jq .
+```
+
+### Create with client-side encryption
+```bash
+curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens \
+  -H "X-Encryption-Key: <YOUR_SECRET_KEY>" | jq .
+# All subsequent requests must include the same X-Encryption-Key header
+```
+
 ## Encryption
-
-Two layers of protection:
-1. **Server key** — all connection strings encrypted with AES-256-GCM by default
-2. **Client key** (optional) — `X-Encryption-Key` header adds a second encryption layer; server alone cannot decrypt
-
-## Importing OpenClaw Memory
-
-Read local MEMORY.md or daily notes, split into logical entries, bulk POST with `source: "openclaw"` and relevant tags.
+- **Server key**: all connection strings encrypted by default (AES-256-GCM)
+- **Client key** (optional): `X-Encryption-Key` header for double encryption — server alone cannot decrypt
 
 Source: https://github.com/siddontang/claw-memory
