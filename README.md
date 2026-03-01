@@ -191,3 +191,75 @@ Without client key:              With client key:
 ## License
 
 MIT
+
+## Use with Your Claw (Skill Installation)
+
+Claw Memory ships as an **AgentSkill** that any Claw can install. Once installed, your claw knows how to create tokens, store memories, search, and bulk import — no manual API docs needed.
+
+### For OpenClaw
+
+1. **Copy the skill:**
+```bash
+mkdir -p ~/.openclaw/skills/claw-memory
+curl -o ~/.openclaw/skills/claw-memory/SKILL.md \
+  https://raw.githubusercontent.com/siddontang/claw-memory/main/SKILL.md
+```
+
+2. **Verify it's loaded:**
+```bash
+openclaw skills list
+# Should show: ✓ ready │ 📦 claw-memory
+```
+
+3. **Talk to your claw:**
+> "Create a shared memory space and upload my MEMORY.md to it"
+
+That's it. Your claw reads the skill and knows what to do.
+
+### For Other Claws (KimiClaw, NanoClaw, etc.)
+
+Any claw that supports skill files can use Claw Memory:
+
+1. **Download the skill:**
+```bash
+curl -O https://raw.githubusercontent.com/siddontang/claw-memory/main/SKILL.md
+```
+
+2. **Add it to your claw's skill directory** (varies by platform)
+
+3. **Or just paste the API docs** from SKILL.md into your claw's system prompt / instructions
+
+### What the Skill Teaches Your Claw
+
+Once installed, your claw can:
+
+- 🔑 **Create memory spaces** — `POST /api/tokens` (with optional client-side encryption)
+- 💾 **Store memories** — with source tracking, tags, and metadata
+- 🔍 **Search memories** — full-text search, filter by tags/source/time range
+- 📦 **Bulk import** — upload existing MEMORY.md or daily notes in one call
+- 🔒 **Use encryption** — optional `X-Encryption-Key` for double encryption
+
+### Quick Example: Share Memory Between Two Claws
+
+**Claw A (OpenClaw):**
+```bash
+# Create a space
+TOKEN=$(curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens | jq -r '.data.token')
+echo "Share this token with other claws: $TOKEN"
+
+# Store a memory
+curl -X POST https://claw-memory.siddontang.workers.dev/api/memories \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "User likes TypeScript and hates Java", "source": "openclaw", "tags": ["preferences"]}'
+```
+
+**Claw B (KimiClaw):**
+```bash
+# Use the same token — instantly sees Claw A's memories
+curl "https://claw-memory.siddontang.workers.dev/api/memories?q=preferences" \
+  -H "Authorization: Bearer $TOKEN"
+# Returns: "User likes TypeScript and hates Java"
+```
+
+No setup. No sync. No conflict resolution. Just shared memory.
