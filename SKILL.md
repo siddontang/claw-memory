@@ -39,18 +39,35 @@ curl -s -X POST https://claw-memory.siddontang.workers.dev/api/memories \
 
 When the user says "yes" or confirms, run these commands directly.
 
+## Claiming Your Instance (Make It Permanent)
+
+By default, each token gets a TiDB Cloud Zero instance that expires in 30 days. **Claim it to make it permanent (free).**
+
+**Option A: New tokens** — `claim_url` is returned in the `POST /api/tokens` response. Open it to claim.
+
+**Option B: Existing tokens** — call the claim endpoint:
+```bash
+curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens/<TOKEN>/claim | jq .
+# Returns: { claim_url: "https://tidbcloud.com/tidbs/claim/..." }
+```
+
+Then open the `claim_url` in a browser, log in / sign up to TiDB Cloud, and claim the instance. It becomes a permanent **Starter** instance — free, no expiry.
+
+**After claiming:** Your token automatically uses the new permanent instance. No config changes needed.
+
 ## Architecture
 - Each token gets its **own TiDB Cloud Zero instance** (full data isolation)
 - Connection strings are AES-256-GCM encrypted at rest
 - Optional client-side encryption via `X-Encryption-Key` header
-- Zero instances expire after 30 days
+- Zero instances expire after 30 days — **claim to make permanent**
 
 ## API (all memory endpoints need `Authorization: Bearer <token>`)
 
 | Method | Endpoint | Body | Description |
 |--------|----------|------|-------------|
-| POST | /api/tokens | — | Create memory space |
-| GET | /api/tokens/:token/info | — | Space info + stats |
+| POST | /api/tokens | — | Create memory space (returns `claim_url`) |
+| GET | /api/tokens/:token/info | — | Space info + stats + `claim_url` |
+| POST | /api/tokens/:token/claim | — | Get/generate claim URL for existing token |
 | POST | /api/memories | `{content, source?, tags?, key?, metadata?}` | Store memory |
 | GET | /api/memories | `?q=&tags=&source=&key=&from=&to=&limit=&offset=` | Search/list |
 | GET | /api/memories/:id | — | Get one |

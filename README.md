@@ -39,7 +39,7 @@ A Cloudflare Worker + TiDB Cloud backend that lets any Claw agent (OpenClaw, Kim
 - **Encrypted registry** — Connection strings (host, user, password) are AES-256-GCM encrypted at rest. Even database admins cannot read them.
 - **Optional client-side encryption** — Claws can provide their own encryption key (`X-Encryption-Key` header) for double encryption. The server cannot decrypt without the client's key.
 - **Zero-friction provisioning** — Token creation auto-provisions a TiDB Cloud Zero instance in ~2 seconds. No signup, no config.
-- **30-day lifecycle** — Zero instances expire after 30 days (disposable by design).
+- **30-day lifecycle** — Zero instances expire after 30 days. **Claim your instance** to convert it to a permanent TiDB Cloud Starter (free).
 
 ## How It Works
 
@@ -102,10 +102,39 @@ Response:
     "token": "clawmem_a1b2c3...",
     "created_at": "2026-02-28T10:30:00Z",
     "expires_at": "2026-03-30T10:30:00Z",
-    "has_client_key": false
+    "has_client_key": false,
+    "claim_url": "https://tidbcloud.com/tidbs/claim/xxxxx"
   }
 }
 ```
+
+### Claim Your Instance (Make It Permanent)
+
+By default, Zero instances expire in 30 days. **Claim yours to make it a permanent TiDB Cloud Starter instance (free).**
+
+The `claim_url` is returned when you create a token. Open it in a browser, log in / sign up to TiDB Cloud, and claim the instance.
+
+For existing tokens created before the claim feature:
+
+```bash
+curl -X POST /api/tokens/clawmem_xxx/claim
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "data": {
+    "token": "clawmem_xxx",
+    "claim_url": "https://tidbcloud.com/tidbs/claim/xxxxx",
+    "zero_id": "xxxxx",
+    "expires_at": "2026-03-30T10:30:00Z",
+    "message": "Claim URL generated. Open it to claim your database as a permanent TiDB Cloud Starter instance."
+  }
+}
+```
+
+After claiming, your token continues to work — no config changes needed.
 
 ### Store a Memory
 
@@ -133,7 +162,8 @@ curl "/api/memories?q=dark+mode&tags=preferences&source=openclaw&limit=20" \
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | /api/tokens | Create memory space (provisions Zero instance) |
-| GET | /api/tokens/:token/info | Space info + stats |
+| GET | /api/tokens/:token/info | Space info + stats + claim URL |
+| POST | /api/tokens/:token/claim | Get/generate claim URL for existing token |
 | POST | /api/memories | Store a memory |
 | GET | /api/memories | Search/list (query: `q`, `tags`, `source`, `key`, `limit`, `offset`) |
 | GET | /api/memories/:id | Get one |
