@@ -14,6 +14,8 @@ export interface TokenRegistry {
   has_client_key: boolean;
   expires_at: string | null;
   created_at: string;
+  claim_url: string | null;
+  zero_id: string | null;
 }
 
 /** Decrypted connection info stored inside connection_encrypted */

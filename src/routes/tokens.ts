@@ -27,11 +27,17 @@ export async function createToken(
 
   const provisionData = (await provisionRes.json()) as {
     instance: {
+      id?: string;
       connection: {
         host: string;
         port: number;
         username: string;
         password: string;
+      };
+      connectionString?: string;
+      claimInfo?: {
+        zeroId: string;
+        claimUrl: string;
       };
       expiresAt: string;
     };
@@ -39,6 +45,8 @@ export async function createToken(
 
   const { host, port, username, password } = provisionData.instance.connection;
   const expiresAt = provisionData.instance.expiresAt;
+  const claimUrl = provisionData.instance.claimInfo?.claimUrl || null;
+  const zeroId = provisionData.instance.claimInfo?.zeroId || provisionData.instance.id || null;
   const database = "claw_memory";
 
   // Connect to the new instance — first create the database, then the table
@@ -58,9 +66,9 @@ export async function createToken(
   // Store the mapping in the registry
   await execute(
     registryConn,
-    `INSERT INTO token_registry (token, connection_encrypted, iv, has_client_key, expires_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    [token, ciphertext, iv, clientKey ? 1 : 0, expiresAt]
+    `INSERT INTO token_registry (token, connection_encrypted, iv, has_client_key, expires_at, claim_url, zero_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [token, ciphertext, iv, clientKey ? 1 : 0, expiresAt, claimUrl, zeroId]
   );
 
   // Read back to get created_at
@@ -78,6 +86,7 @@ export async function createToken(
         created_at: rows[0].created_at,
         expires_at: rows[0].expires_at,
         has_client_key: !!clientKey,
+        claim_url: claimUrl,
       },
     },
     201
@@ -93,7 +102,7 @@ export async function getTokenInfo(
 ): Promise<Response> {
   const rows = await query<TokenRegistry>(
     registryConn,
-    "SELECT token, has_client_key, expires_at, created_at FROM token_registry WHERE token = ?",
+    "SELECT token, has_client_key, expires_at, created_at, claim_url FROM token_registry WHERE token = ?",
     [token]
   );
 
@@ -138,6 +147,7 @@ export async function getTokenInfo(
       created_at: reg.created_at,
       expires_at: reg.expires_at,
       has_client_key: !!reg.has_client_key,
+      claim_url: reg.claim_url || null,
       memory_count: countResult[0]?.cnt ?? 0,
       sources: sourceResult.map((r) => ({
         source: r.source,
