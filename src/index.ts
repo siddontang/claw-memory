@@ -1,6 +1,6 @@
 import { getRegistryConnection } from "./db";
 import { authenticate } from "./auth";
-import { createToken, getTokenInfo } from "./routes/tokens";
+import { createToken, getTokenInfo, claimToken } from "./routes/tokens";
 import {
   createMemory,
   listMemories,
@@ -97,6 +97,16 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       return errorResponse("Invalid token format", 400);
     }
     return getTokenInfo(registryConn, token, env.ENCRYPTION_KEY, request);
+  }
+
+  // POST /api/tokens/:token/claim — get claim URL for existing token's Zero instance
+  const claimMatch = path.match(/^\/api\/tokens\/([^/]+)\/claim$/);
+  if (claimMatch && method === "POST") {
+    const token = claimMatch[1];
+    if (!isValidToken(token)) {
+      return errorResponse("Invalid token format", 400);
+    }
+    return claimToken(registryConn, token, env.ENCRYPTION_KEY, request);
   }
 
   // --- Memory routes (auth required) ---
