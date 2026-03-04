@@ -1,6 +1,6 @@
 import { getRegistryConnection } from "./db";
 import { authenticate } from "./auth";
-import { createToken, getTokenInfo, claimToken } from "./routes/tokens";
+import { createToken, getTokenInfo, claimToken, getTokenConnection_endpoint, updateTokenConnection } from "./routes/tokens";
 import {
   createMemory,
   listMemories,
@@ -107,6 +107,26 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       return errorResponse("Invalid token format", 400);
     }
     return claimToken(registryConn, token, env.ENCRYPTION_KEY, request);
+  }
+
+  // GET /api/tokens/:token/connection — show connection string
+  const connMatch = path.match(/^\/api\/tokens\/([^/]+)\/connection$/);
+  if (connMatch && method === "GET") {
+    const token = connMatch[1];
+    if (!isValidToken(token)) {
+      return errorResponse("Invalid token format", 400);
+    }
+    return getTokenConnection_endpoint(registryConn, token, env.ENCRYPTION_KEY, request);
+  }
+
+  // POST /api/tokens/:token/update-connection — update connection after claiming
+  const updateConnMatch = path.match(/^\/api\/tokens\/([^/]+)\/update-connection$/);
+  if (updateConnMatch && method === "POST") {
+    const token = updateConnMatch[1];
+    if (!isValidToken(token)) {
+      return errorResponse("Invalid token format", 400);
+    }
+    return updateTokenConnection(registryConn, token, env.ENCRYPTION_KEY, request);
   }
 
   // --- Memory routes (auth required) ---

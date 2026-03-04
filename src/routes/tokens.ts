@@ -1,7 +1,7 @@
 import type { Connection } from "@tidbcloud/serverless";
 import { query, execute, createConnection, initSchema, getTokenConnection } from "../db";
 import { generateToken, jsonResponse, errorResponse, isValidToken } from "../utils";
-import { encrypt } from "../crypto";
+import { encrypt, decrypt } from "../crypto";
 import type { TokenRegistry, ConnectionInfo } from "../types";
 
 /** POST /api/tokens — Provision a new TiDB Cloud Zero instance and create a token */
@@ -122,6 +122,7 @@ export async function claimToken(
         zero_id: reg.zero_id,
         expires_at: reg.expires_at,
         message: "Claim URL already exists. Open it to claim your database.",
+        important: "⚠️ After claiming, your instance gets a NEW connection string. Copy it from TiDB Cloud console, then call POST /api/tokens/:token/update-connection to update. Use GET /api/tokens/:token/connection to verify.",
       },
     });
   }
@@ -183,6 +184,80 @@ export async function claimToken(
       zero_id: zeroId,
       expires_at: reg.expires_at,
       message: "Claim URL generated. Open it to claim your database as a permanent TiDB Cloud Starter instance.",
+      important: "⚠️ After claiming, your instance gets a NEW connection string. You must update your token's connection by calling POST /api/tokens/:token/update-connection with the new credentials from TiDB Cloud console. Then use GET /api/tokens/:token/connection to verify.",
+    },
+  });
+}
+
+/** GET /api/tokens/:token/connection — Show the connection string (requires auth) */
+export async function getTokenConnection_endpoint(
+  registryConn: Connection,
+  token: string,
+  serverEncryptionKey: string,
+  request: Request
+): Promise<Response> {
+  const rows = await query<TokenRegistry>(
+    registryConn,
+    "SELECT token, has_client_key, expires_at, created_at, claim_url FROM token_registry WHERE token = ?",
+    [token]
+  );
+
+  if (rows.length === 0) {
+    return errorResponse("Token not found", 404);
+  }
+
+  const reg = rows[0];
+  const clientKey = request.headers.get("X-Encryption-Key") || undefined;
+
+  const result = await getTokenConnection(registryConn, token, serverEncryptionKey, clientKey);
+
+  if (result === "not_found") return errorResponse("Token not found", 404);
+  if (result === "client_key_required") return errorResponse("This memory space requires an encryption key", 401);
+  if (result === "decrypt_failed") return errorResponse("Invalid encryption key", 401);
+
+  // result is a Connection object — we need the raw connection info
+  // Re-decrypt to get the actual details
+  const regRows = await query<TokenRegistry>(
+    registryConn,
+    "SELECT connection_encrypted, iv, has_client_key FROM token_registry WHERE token = ?",
+    [token]
+  );
+  const regData = regRows[0];
+
+  let connInfo: ConnectionInfo;
+  try {
+    const plaintext = await decrypt(
+      regData.connection_encrypted,
+      regData.iv,
+      serverEncryptionKey,
+      regData.has_client_key ? clientKey : undefined
+    );
+    connInfo = JSON.parse(plaintext);
+  } catch {
+    return errorResponse("Failed to decrypt connection info", 500);
+  }
+
+  const connectionString = `mysql -u ${connInfo.user} -h ${connInfo.host} -P ${connInfo.port} -p'${connInfo.password}' ${connInfo.database}`;
+  const dsnUrl = `mysql://${connInfo.user}:${connInfo.password}@${connInfo.host}:${connInfo.port}/${connInfo.database}?ssl=true`;
+
+  return jsonResponse({
+    ok: true,
+    data: {
+      token: reg.token,
+      host: connInfo.host,
+      port: connInfo.port,
+      user: connInfo.user,
+      password: connInfo.password,
+      database: connInfo.database,
+      connection_string: connectionString,
+      dsn: dsnUrl,
+      expires_at: reg.expires_at,
+      claim_url: reg.claim_url || null,
+      note: reg.claim_url && !reg.expires_at
+        ? "This is a permanent Starter instance."
+        : reg.claim_url
+        ? "⚠️ After claiming, your connection string will change. Call this endpoint again to get the new one."
+        : "Instance expires in 30 days. Use POST /api/tokens/:token/claim to make it permanent.",
     },
   });
 }
@@ -247,6 +322,99 @@ export async function getTokenInfo(
         source: r.source,
         count: r.cnt,
       })),
+    },
+  });
+}
+
+/** POST /api/tokens/:token/update-connection — Update connection after claiming (new Starter instance) */
+export async function updateTokenConnection(
+  registryConn: Connection,
+  token: string,
+  serverEncryptionKey: string,
+  request: Request
+): Promise<Response> {
+  const rows = await query<TokenRegistry>(
+    registryConn,
+    "SELECT token, has_client_key FROM token_registry WHERE token = ?",
+    [token]
+  );
+
+  if (rows.length === 0) {
+    return errorResponse("Token not found", 404);
+  }
+
+  const reg = rows[0];
+  const clientKey = request.headers.get("X-Encryption-Key") || undefined;
+
+  if (reg.has_client_key && !clientKey) {
+    return errorResponse("This memory space requires an encryption key", 401);
+  }
+
+  let body: { host: string; port?: number; user: string; password: string; database?: string };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return errorResponse("Invalid JSON body", 400);
+  }
+
+  if (!body.host || !body.user || !body.password) {
+    return errorResponse("Required fields: host, user, password", 400);
+  }
+
+  const connInfo: ConnectionInfo = {
+    host: body.host,
+    port: body.port || 4000,
+    user: body.user,
+    password: body.password,
+    database: body.database || "claw_memory",
+  };
+
+  // Verify the new connection works
+  try {
+    const testConn = createConnection({
+      host: connInfo.host,
+      username: connInfo.user,
+      password: connInfo.password,
+      database: connInfo.database,
+    });
+    await query(testConn, "SELECT 1");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    return errorResponse(`Cannot connect to the new instance: ${msg}`, 400);
+  }
+
+  // Ensure schema exists on the new instance
+  const newConn = createConnection({
+    host: connInfo.host,
+    username: connInfo.user,
+    password: connInfo.password,
+    database: connInfo.database,
+  });
+  await initSchema(newConn);
+
+  // Encrypt and update
+  const { ciphertext, iv } = await encrypt(
+    JSON.stringify(connInfo),
+    serverEncryptionKey,
+    reg.has_client_key ? clientKey : undefined
+  );
+
+  await execute(
+    registryConn,
+    "UPDATE token_registry SET connection_encrypted = ?, iv = ?, expires_at = NULL WHERE token = ?",
+    [ciphertext, iv, token]
+  );
+
+  return jsonResponse({
+    ok: true,
+    data: {
+      token,
+      host: connInfo.host,
+      port: connInfo.port,
+      user: connInfo.user,
+      database: connInfo.database,
+      expires_at: null,
+      message: "✅ Connection updated to new Starter instance. Your token is now permanent!",
     },
   });
 }
