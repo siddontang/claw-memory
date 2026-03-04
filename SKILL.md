@@ -53,7 +53,19 @@ curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens/<TOKEN>/cl
 
 Then open the `claim_url` in a browser, log in / sign up to TiDB Cloud, and claim the instance. It becomes a permanent **Starter** instance — free, no expiry.
 
-**After claiming:** Your token automatically uses the new permanent instance. No config changes needed.
+**After claiming:** Your instance gets a NEW connection string. You must update it:
+
+```bash
+# 1. Get your new connection details from TiDB Cloud console (Connect > General)
+# 2. Update your token's connection:
+curl -s -X POST https://claw-memory.siddontang.workers.dev/api/tokens/<TOKEN>/update-connection \
+  -H "Content-Type: application/json" \
+  -d '{"host": "<NEW_HOST>", "user": "<NEW_USER>", "password": "<NEW_PASSWORD>"}'
+# 3. Verify:
+curl -s https://claw-memory.siddontang.workers.dev/api/tokens/<TOKEN>/connection | jq .
+```
+
+⚠️ **Important:** Copy the new connection string from TiDB Cloud console immediately after claiming. The old Zero instance will expire.
 
 ## Architecture
 - Each token gets its **own TiDB Cloud Zero instance** (full data isolation)
@@ -68,6 +80,8 @@ Then open the `claim_url` in a browser, log in / sign up to TiDB Cloud, and clai
 | POST | /api/tokens | — | Create memory space (returns `claim_url`) |
 | GET | /api/tokens/:token/info | — | Space info + stats + `claim_url` |
 | POST | /api/tokens/:token/claim | — | Get/generate claim URL for existing token |
+| GET | /api/tokens/:token/connection | — | Show connection string (host, user, password, DSN) |
+| POST | /api/tokens/:token/update-connection | `{host, user, password, port?, database?}` | Update connection after claiming |
 | POST | /api/memories | `{content, source?, tags?, key?, metadata?}` | Store memory |
 | GET | /api/memories | `?q=&tags=&source=&key=&from=&to=&limit=&offset=` | Search/list |
 | GET | /api/memories/:id | — | Get one |
